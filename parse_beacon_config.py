@@ -25,7 +25,9 @@ from io import BytesIO
 
 THRESHOLD = 1100
 COLUMN_WIDTH = 35
-SUPPORTED_VERSIONS = (3, 4)
+
+# version 99 is a special version used for brute forcing the different 1 byte XOR key
+SUPPORTED_VERSIONS = (3, 4, 99)
 SILENT_CONFIGS = ['PublicKey', 'ProcInject_Stub', 'smbFrameHeader', 'tcpFrameHeader', 'SpawnTo']
 
 def _cli_print(msg, end='\n'):
@@ -40,14 +42,14 @@ class confConsts:
     TYPE_STR = 3
 
     START_PATTERNS = {
-    3: b'\x69\x68\x69\x68\x69\x6b..\x69\x6b\x69\x68\x69\x6b..\x69\x6a',
-    4: b'\x2e\x2f\x2e\x2f\x2e...\x2e\x2c\x2e\x2f'
+        3: b'\x69\x68\x69\x68\x69\x6b..\x69\x6b\x69\x68\x69\x6b..\x69\x6a',
+        4: b'\x2e\x2f\x2e\x2f\x2e...\x2e\x2c\x2e\x2f'
     }
     START_PATTERN_DECODED = b'\x00\x01\x00\x01\x00...\x00\x02\x00\x01\x00'
     CONFIG_SIZE = 4096
     XORBYTES = {
-    3: 0x69,
-    4: 0x2e
+        3: 0x69,
+        4: 0x2e
     }
 
 class packedSetting:
@@ -112,11 +114,11 @@ class packedSetting:
                     current_category = 'SessionId' if name == 0 else 'Output'
             elif tstep in (1, 2, 5, 6):
                 length = read_dword_be(dio)
-                step_data = dio.read(length).decode('latin-1')
+                step_data = dio.read(length).decode()
                 trans[current_category].append(BeaconSettings.TSTEPS[tstep] + ' "' + step_data + '"')
             elif tstep in (10, 16, 9):
                 length = read_dword_be(dio)
-                step_data = dio.read(length).decode('latin-1')
+                step_data = dio.read(length).decode()
                 if tstep == 9:
                     trans['ConstParams'].append(step_data)
                 else:
@@ -241,6 +243,7 @@ class packedSetting:
 
                 conf_data = prog
             if self.hashBlob:
+                conf_data = conf_data.strip(b'\x00')
                 conf_data = hashlib.md5(conf_data).hexdigest()
 
             return conf_data
@@ -248,7 +251,7 @@ class packedSetting:
         if self.is_headers:
             return self.parse_transformdata(conf_data)
 
-        conf_data = conf_data.strip(b'\x00').decode('latin-1')
+        conf_data = conf_data.strip(b'\x00').decode()
         return conf_data
 
 
@@ -372,6 +375,7 @@ class cobaltstrikeConfig:
             f: file path or file-like object
             '''
             self.data = None
+            self.bruteforce_data = None
             if isinstance(f, str):
                 with open(f, 'rb') as fobj:
                     self.data = fobj.read()
@@ -393,18 +397,36 @@ class cobaltstrikeConfig:
         :bool quiet: Whether to print missing or empty settings
         :bool as_json: Whether to dump as json
         '''
-        re_start_match = re.search(confConsts.START_PATTERNS[version], self.data)
-        re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED, self.data)
+
+        re_start_match = None
+        re_start_decoded_match = None
+
+        if version == 99:
+            print('[!] Start brute forcing 1 byte XOR key...')
+            for key in range(1, 256):
+                self.bruteforce_data = bytes([b ^ key for b in self.data])
+                re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED, self.bruteforce_data)
+                if re_start_decoded_match:
+                    print(f'[!] Found unofficial XOR key: {hex(key)}')
+                    break  
+        else:
+            re_start_match = re.search(confConsts.START_PATTERNS[version], self.data)
+            re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED, self.data)
         
+        # not found, return none
         if not re_start_match and not re_start_decoded_match:
             return None
+
         encoded_config_offset = re_start_match.start() if re_start_match else -1
         decoded_config_offset = re_start_decoded_match.start() if re_start_decoded_match else -1
         
         if encoded_config_offset >= 0:
             full_config_data = cobaltstrikeConfig.decode_config(self.data[encoded_config_offset : encoded_config_offset + confConsts.CONFIG_SIZE], version=version)
         else:
-            full_config_data = self.data[decoded_config_offset : decoded_config_offset + confConsts.CONFIG_SIZE]
+            data = self.data
+            if version == 99:
+                data = self.bruteforce_data
+            full_config_data = data[decoded_config_offset : decoded_config_offset + confConsts.CONFIG_SIZE]
 
         parsed_config = {}
         settings = BeaconSettings(version).settings.items()
