@@ -523,31 +523,35 @@ class cobaltstrikeConfig:
             return False
         data = data_sections[0].get_data()
 
-        offset = 0
-        key_found = False
-        while offset < len(data):
-            key = data[offset:offset+4]
-            if key != bytes(4):
-                if data.count(key) >= THRESHOLD:
-                    key_found = True
-                    size = int.from_bytes(data[offset-4:offset], 'little')
-                    encrypted_data_offset = offset+16 - (offset % 16)
-                    break
+        # key length may different from the sample in the wild
+        for key_length in [4, 8]:
+            offset = 0
+            key_found = False
+            while offset < len(data):
+                key = data[offset:offset+key_length]
+                if key != bytes(key_length):
+                    if data.count(key) >= THRESHOLD:
+                        key_found = True
+                        size = int.from_bytes(data[offset-key_length:offset], 'little')
+                        encrypted_data_offset = offset+16 - (offset % 16)
+                        break
 
-            offset += 4
+                offset += key_length
 
-        if not key_found:
-            return False
+            if key_found:
+                # decrypt
+                enc_data = data[encrypted_data_offset:encrypted_data_offset+size]
+                dec_data = []
+                for i,c in enumerate(enc_data):
+                    dec_data.append(c ^ key[i % key_length])
 
-        # decrypt
-        enc_data = data[encrypted_data_offset:encrypted_data_offset+size]
-        dec_data = []
-        for i,c in enumerate(enc_data):
-            dec_data.append(c ^ key[i % 4])
-
-        dec_data = bytes(dec_data)
-        self.data = dec_data
-        return self.parse_config(version=version, quiet=quiet, as_json=as_json)
+                dec_data = bytes(dec_data)
+                self.data = dec_data
+                
+                parsed_config = self.parse_config(version=version, quiet=quiet, as_json=as_json)
+                if parsed_config is not None:
+                    return parsed_config
+        return None
 
 
 if __name__ == '__main__':
