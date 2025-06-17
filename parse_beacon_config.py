@@ -441,36 +441,36 @@ class cobaltstrikeConfig:
         if version == 99:
             print('[!] Start brute forcing 1 byte XOR key...')
             for key in range(1, 256):
-                found = False
                 self.bruteforce_data = bytes([b ^ key for b in self.data])
-
-                for pattern in confConsts.START_PATTERN_DECODED:
+                
+                for i, pattern in enumerate(confConsts.START_PATTERN_DECODED):
                     re_start_decoded_match = re.search(pattern, self.bruteforce_data)
                     if re_start_decoded_match:
                         print(f'[!] Found unofficial XOR key: {hex(key)}')
-                        found = True
+                        if i != 0:
+                            print(f"[!] Found unofficial DATA TYPE")
                         break
                 
-                if found:
+                if re_start_decoded_match:
                     break
         else:
             re_start_match = re.search(confConsts.START_PATTERNS[version], self.data)
             re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED[0], self.data)
         
-        # not found, return none
         if not re_start_match and not re_start_decoded_match:
             return None
 
-        encoded_config_offset = re_start_match.start() if re_start_match else -1
-        decoded_config_offset = re_start_decoded_match.start() if re_start_decoded_match else -1
-        
-        if encoded_config_offset >= 0:
-            full_config_data = cobaltstrikeConfig.decode_config(self.data[encoded_config_offset : encoded_config_offset + confConsts.CONFIG_SIZE], version=version)
+        if re_start_match:
+            encoded_config_offset = re_start_match.start()
+            full_config_data = cobaltstrikeConfig.decode_config(
+                self.data[encoded_config_offset : encoded_config_offset + confConsts.CONFIG_SIZE], 
+                version=version
+            )
         else:
-            data = self.data
-            if version == 99:
-                data = self.bruteforce_data
-            full_config_data = data[decoded_config_offset : decoded_config_offset + confConsts.CONFIG_SIZE]
+            decoded_config_offset = re_start_decoded_match.start()
+            # Use bruteforce_data for version 99, otherwise use original data
+            data_source = self.bruteforce_data if version == 99 else self.data
+            full_config_data = data_source[decoded_config_offset : decoded_config_offset + confConsts.CONFIG_SIZE]
 
         parsed_config = {}
         settings = BeaconSettings(version).settings.items()
@@ -498,7 +498,7 @@ class cobaltstrikeConfig:
                     continue
                 _cli_print("{: <{width}} - {val}".format(conf_name, width=COLUMN_WIDTH-3, val='Empty'))
             
-            elif conf_type == dict: # the beautifulest code
+            elif conf_type == dict:
                 conf_data = []
                 for k in parsed_setting.keys():
                     if parsed_setting[k]:
@@ -512,7 +512,7 @@ class cobaltstrikeConfig:
                     _cli_print(' ' * COLUMN_WIDTH, end='')
                     _cli_print(val)        
             
-            elif conf_type == list: # list
+            elif conf_type == list:
                 _cli_print("{: <{width}} - {val}".format(conf_name, width=COLUMN_WIDTH-3, val=parsed_setting[0]))
                 for val in parsed_setting[1:]:
                     _cli_print(' ' * COLUMN_WIDTH, end='')
