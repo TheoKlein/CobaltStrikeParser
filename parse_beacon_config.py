@@ -45,7 +45,10 @@ class confConsts:
         3: b'\x69\x68\x69\x68\x69\x6b..\x69\x6b\x69\x68\x69\x6b..\x69\x6a',
         4: b'\x2e\x2f\x2e\x2f\x2e...\x2e\x2c\x2e\x2f'
     }
-    START_PATTERN_DECODED = b'\x00\x01\x00\x01\x00...\x00\x02\x00\x01\x00'
+    START_PATTERN_DECODED = [
+        b'\x00\x01\x00\x01\x00...\x00\x02\x00\x01\x00',
+        b'\x00\x01\x00\x02\x00...\x00\x02\x00\x02\x00'
+    ]
     CONFIG_SIZE = 4096
     XORBYTES = {
         3: 0x69,
@@ -404,14 +407,21 @@ class cobaltstrikeConfig:
         if version == 99:
             print('[!] Start brute forcing 1 byte XOR key...')
             for key in range(1, 256):
+                found = False
                 self.bruteforce_data = bytes([b ^ key for b in self.data])
-                re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED, self.bruteforce_data)
-                if re_start_decoded_match:
-                    print(f'[!] Found unofficial XOR key: {hex(key)}')
-                    break  
+
+                for pattern in confConsts.START_PATTERN_DECODED:
+                    re_start_decoded_match = re.search(pattern, self.bruteforce_data)
+                    if re_start_decoded_match:
+                        print(f'[!] Found unofficial XOR key: {hex(key)}')
+                        found = True
+                        break
+                
+                if found:
+                    break
         else:
             re_start_match = re.search(confConsts.START_PATTERNS[version], self.data)
-            re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED, self.data)
+            re_start_decoded_match = re.search(confConsts.START_PATTERN_DECODED[0], self.data)
         
         # not found, return none
         if not re_start_match and not re_start_decoded_match:
