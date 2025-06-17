@@ -40,6 +40,11 @@ class confConsts:
     TYPE_SHORT = 1
     TYPE_INT = 2
     TYPE_STR = 3
+    
+    # Alternative datatype encodings (for custom beacon variants)
+    TYPE_SHORT_ALT = 2
+    TYPE_INT_ALT = 4
+    TYPE_STR_ALT = 6
 
     START_PATTERNS = {
         3: b'\x69\x68\x69\x68\x69\x6b..\x69\x6b\x69\x68\x69\x6b..\x69\x6a',
@@ -92,6 +97,24 @@ class packedSetting:
         self_repr[3] = self.datatype
         self_repr[4:6] = self.length.to_bytes(2, 'big')
         return self_repr
+    
+    def binary_repr_alt(self):
+        """
+        Alternative binary representation with different datatype encoding
+        """
+        self_repr = bytearray(6)
+        self_repr[1] = self.pos
+        
+        # Map original datatypes to alternative encodings
+        datatype_mapping = {
+            confConsts.TYPE_SHORT: confConsts.TYPE_SHORT_ALT,
+            confConsts.TYPE_INT: confConsts.TYPE_INT_ALT,
+            confConsts.TYPE_STR: confConsts.TYPE_STR_ALT
+        }
+        
+        self_repr[3] = datatype_mapping.get(self.datatype, self.datatype)
+        self_repr[4:6] = self.length.to_bytes(2, 'big')
+        return self_repr
 
     def parse_transformdata(self, data):
         '''
@@ -140,11 +163,22 @@ class packedSetting:
 
 
     def pretty_repr(self, full_config_data):
+        # Try original encoding first
         data_offset = full_config_data.find(self.binary_repr())
+        
+        # If not found, try alternative encoding
+        if data_offset < 0:
+            data_offset = full_config_data.find(self.binary_repr_alt())
+        
+        # Handle string length search for both encodings
         if data_offset < 0 and self.datatype == confConsts.TYPE_STR:
             self.length = 16
             while self.length < 2048:
                 data_offset = full_config_data.find(self.binary_repr())
+                if data_offset > 0:
+                    break
+                # Also try alternative encoding for strings
+                data_offset = full_config_data.find(self.binary_repr_alt())
                 if data_offset > 0:
                     break
                 self.length *= 2
