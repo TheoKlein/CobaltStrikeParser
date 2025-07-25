@@ -23,7 +23,7 @@ import os
 import hashlib
 from io import BytesIO
 
-THRESHOLD = 1100
+THRESHOLD = 1500
 COLUMN_WIDTH = 35
 
 # version 99 is a special version used for brute forcing the different 1 byte XOR key
@@ -439,7 +439,6 @@ class cobaltstrikeConfig:
         re_start_decoded_match = None
 
         if version == 99:
-            print('[!] Start brute forcing 1 byte XOR key...')
             for key in range(1, 256):
                 self.bruteforce_data = bytes([b ^ key for b in self.data])
                 
@@ -568,33 +567,53 @@ class cobaltstrikeConfig:
         data = data_sections[0].get_data()
 
         # key length may different from the sample in the wild
-        for key_length in [4, 8]:
+        for key_length in range(4, 8 + 1):
+            print(f"[-] Try to find key len: {key_length}")
+            
+            # First, find a key that meets the threshold
+            target_key = None
             offset = 0
-            key_found = False
             while offset < len(data):
                 key = data[offset:offset+key_length]
-                if key != bytes(key_length):
-                    if data.count(key) >= THRESHOLD:
-                        key_found = True
-                        size = int.from_bytes(data[offset-key_length:offset], 'little')
-                        encrypted_data_offset = offset+16 - (offset % 16)
-                        break
-
-                offset += key_length
-
-            if key_found:
-                # decrypt
-                enc_data = data[encrypted_data_offset:encrypted_data_offset+size]
-                dec_data = []
-                for i,c in enumerate(enc_data):
-                    dec_data.append(c ^ key[i % key_length])
-
-                dec_data = bytes(dec_data)
-                self.data = dec_data
+                if data.count(key) >= THRESHOLD:
+                    target_key = key
+                    print(f"[!] Found potential key: {key}")
+                    break
+                offset += 1
+            
+            if target_key is None:
+                continue  # No key found for this length
+            
+            # Now try ALL occurrences of this key
+            key_offset = 0
+            config_found = False
+            while True:
+                key_offset = data.find(target_key, key_offset)
+                if key_offset == -1:
+                    break  # No more occurrences
                 
-                parsed_config = self.parse_config(version=version, quiet=quiet, as_json=as_json)
-                if parsed_config is not None:
-                    return parsed_config
+                if key_offset >= key_length:  # Ensure we can read size before key
+                    try:
+                        size = int.from_bytes(data[key_offset-key_length:key_offset], 'little')
+                        encrypted_data_offset = key_offset + 16 - (key_offset % 16)
+                        
+                        # Decrypt and try to parse
+                        enc_data = data[encrypted_data_offset:encrypted_data_offset+size]
+                        dec_data = bytes([c ^ target_key[i % key_length] for i, c in enumerate(enc_data)])
+                        self.data = dec_data
+                        
+                        parsed_config = self.parse_config(version=version, quiet=quiet, as_json=as_json)
+                        if parsed_config is not None:
+                            print(f"\n[!] Successfully parsed with key: {target_key} at offset: {hex(key_offset)}")
+                            return parsed_config
+                            
+                    except Exception as e:
+                        print(f"[!] Error processing key at offset {hex(key_offset)}: {e}")
+                
+                key_offset += 0x100  # Move to next potential occurrence
+            
+            print(f"[-] All occurrences of key {target_key} failed, trying next key length...")
+
         return None
 
 
